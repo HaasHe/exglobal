@@ -1,0 +1,880 @@
+﻿{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "labName": {
+      "type": "string",
+       "defaultValue": "exo",
+      "minLength": 3,
+      "maxLength": 10,
+      "metadata": {
+        "description": "Short lab name to be pre-pended to the start of all resource names (3-10 characters only)"
+      }
+    },
+    "adDomainName": {
+      "type": "string",
+       "defaultValue": "hybriddemo.top",
+      "metadata": {
+        "description": "Fully qualified domain name for Active Directory and Office 365 (must be a valid external domain not already assigned to a tenant)"
+      }
+    },
+    "labAdminUserName": {
+      "type": "string",
+      "defaultValue": "labadmin",
+      "metadata": {
+        "description": "Administrative username used for all lab servers and Active Directory domain"
+      }
+    },
+    "labAdminPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Administrative password used for all lab servers and Active Directory domain"
+      }
+    },
+    "ExchangeProductKey": {
+      "type": "string",
+      "defaultValue": "12345-12345-12345-12345",
+      "metadata": {
+        "description": "Exchange Server 2013 Product Key"
+      }
+    },
+    "Office365_Domain_Verification": {
+      "type": "string",
+      "defaultValue": "MS=ms29592139",
+      "metadata": {
+        "description": "Verification TXT record for domain added to Office 365"
+      }
+    },
+    "vNetPrefix": {
+      "type": "string",
+      "defaultValue": "10.0.0.0/16",
+      "metadata": {
+        "description": "IP address space for virtual network"
+      }
+    },
+    "SubnetPrefix": {
+      "type": "string",
+      "defaultValue": "10.0.0.0/24",
+      "metadata": {
+        "description": "IP address space for subnet"
+      }
+    },
+    "DomainControllerVMSize": {
+      "type": "string",
+      "defaultValue": "Standard_D2",
+      "allowedValues": [
+        "Standard_D2"
+      ],
+      "metadata": {
+        "description": "Domain Controller VM Size"
+      }
+    },
+    "ExchangeVMSize": {
+      "type": "string",
+      "defaultValue": "Standard_D2",
+      "allowedValues": [
+        "Standard_D2"
+      ],
+      "metadata": {
+        "description": "Exchange VM Size"
+      }
+    }
+  },
+  "variables": {
+
+    "_artifactsLocation": "https://raw.githubusercontent.com/haashe/exglobal/master",
+    "_artifactsLocationSasToken": "",
+    "lclab01vnetTemplate": "vnet.json",
+    "lclab01vnetwithdnsTemplate": "vnet-with-dns-server.json",
+
+    "lclab01Name": "[concat(parameters('labName'), uniqueString(resourceGroup().id))]",
+    "lclab01Subnet1Name": "Subnet-1",
+    "adDomainDN": "[concat('DC=',replace(parameters('adDomainName'),'.',',DC='))]",
+    "adDomainNetbios": "[split(parameters('adDomainName'),'.')[0]]",
+    "lclab01DomainJoinOptions": "3",
+    "lclab01vnet01Name": "[concat(parameters('labName'), 'vnet01')]",
+    "lclab01Type": "Standard_LRS",
+
+    "DeployADForestConfigurationScript": "DeployADForestConfiguration.ps1",
+    "DeployADForestConfigurationScriptFunction": "Main",
+    "InstallExchange2013ConfigurationScript": "InstallExchange2013Configuration.ps1",
+    "InstallExchange2013ConfigurationScriptFunction": "Main",
+    "SourcePathAADConnect": "https://download.microsoft.com/download/B/0/0/B00291D0-5A83-4DE7-86F5-980BC00DE05A/AzureADConnect.msi",
+    "TargetPathAADConnect": "AzureADConnect.msi",
+    "SourcePathSignInAssistant": "https://download.microsoft.com/download/5/0/1/5017D39B-8E29-48C8-91A8-8D0E4968E6D4/en/msoidcli_64.msi",
+    "TargetPathSignInAssistant": "msoidcli_64.msi",
+    "GUIDSignInAssistant": "D8AB93B0-6FBF-44A0-971F-C0669B5AE6DD",
+    "SourcePathAADPS": "https://bposast.vo.msecnd.net/MSOPMW/Current/amd64/AdministrationConfig-en.msi",
+    "TargetPathAADPS": "AdministrationConfig-en.msi",
+    "ExchangeFQDN": "[concat(variables('lclab01exch01Name'), '.', parameters('adDomainName'))]",
+
+    "lclab01adds01Name": "[concat(parameters('labName'), 'adds01')]",
+    "lclab01adds01WindowsOSVersion": "2012-R2-Datacenter",
+    "lclab01adds01ImagePublisher": "MicrosoftWindowsServer",
+    "lclab01adds01ImageOffer": "WindowsServer",
+    "lclab01adds01OSDiskName": "[concat(variables('lclab01adds01Name'), 'OSDisk')]",
+    "lclab01adds01DataDiskName": "[concat(variables('lclab01adds01Name'), 'DataDisk')]",
+    "lclab01adds01DataDiskSize": "20",
+    "lclab01adds01VnetID": "[resourceId('Microsoft.Network/virtualNetworks', variables('lclab01vnet01Name'))]",
+    "lclab01adds01SubnetRef": "[concat(variables('lclab01adds01VnetID'), '/subnets/', variables('lclab01Subnet1Name'))]",
+    "lclab01adds01StorageAccountContainerName": "vhds",
+    "lclab01adds01NicName": "[concat(variables('lclab01adds01Name'), 'NetworkInterface')]",
+    "lclab01adds01IPAddress": "[substring(replace(parameters('SubnetPrefix'),'.0/','.4/'),0,sub(length(parameters('SubnetPrefix')),3))]",
+    "lclab01adds01PublicName": "[concat(variables('lclab01adds01Name'), 'Public')]",
+    "lclab01adds01PublicDnsName": "[variables('lclab01adds01Name')]",
+
+    "lclab01exch01Name": "[concat(parameters('labName'), 'exch01')]",
+    "lclab01exch01WindowsOSVersion": "2012-R2-Datacenter",
+    "lclab01exch01ImagePublisher": "MicrosoftWindowsServer",
+    "lclab01exch01ImageOffer": "WindowsServer",
+    "lclab01exch01OSDiskName": "[concat(variables('lclab01exch01Name'), 'OSDisk')]",
+    "lclab01exch01DataDiskName": "[concat(variables('lclab01exch01Name'), 'DataDisk')]",
+    "lclab01exch01DataDiskSize": "20",
+    "lclab01exch01VnetID": "[resourceId('Microsoft.Network/virtualNetworks', variables('lclab01vnet01Name'))]",
+    "lclab01exch01SubnetRef": "[concat(variables('lclab01exch01VnetID'), '/subnets/', variables('lclab01Subnet1Name'))]",
+    "lclab01exch01StorageAccountContainerName": "vhds",
+    "lclab01exch01NicName": "[concat(variables('lclab01exch01Name'), 'NetworkInterface')]",
+    "lclab01exch01PublicName": "[concat(variables('lclab01exch01Name'), 'Public')]",
+    "lclab01exch01PublicDnsName": "[variables('lclab01exch01Name')]",
+    "lclab01exch01NSGName": "[concat(variables('lclab01exch01Name'), 'NSG')]"
+  },
+  "resources": [
+    {
+      "name": "[variables('lclab01Name')]",
+      "type": "Microsoft.Storage/storageAccounts",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [ ],
+      "tags": {
+        "displayName": "lclab01"
+      },
+      "properties": {
+        "accountType": "[variables('lclab01Type')]"
+      }
+    },
+    {
+      "name": "lclab01vnet01",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2015-01-01",
+      "properties": {
+        "mode": "Incremental",
+        "templateLink": {
+          "uri": "[concat(variables('_artifactsLocation'), '/', variables('lclab01vnetTemplate'), variables('_artifactsLocationSasToken'))]",
+          "contentVersion": "1.0.0.0"
+        },
+        "parameters": {
+          "location": {
+            "value": "[resourceGroup().location]"
+          },
+          "virtualNetworkName": {
+            "value": "[variables('lclab01vnet01Name')]"
+          },
+          "virtualNetworkAddressRange": {
+            "value": "[parameters('vNetPrefix')]"
+          },
+          "subnetName": {
+            "value": "[variables('lclab01Subnet1Name')]"
+          },
+          "subnetRange": {
+            "value": "[parameters('SubnetPrefix')]"
+          }
+        }
+      }
+    },
+    {
+      "name": "[variables('lclab01adds01PublicName')]",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [ ],
+      "tags": {
+        "displayName": "lclab01adds01Public"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic",
+        "dnsSettings": {
+          "domainNameLabel": "[variables('lclab01adds01PublicDnsName')]"
+        }
+      }
+    },
+    {
+      "name": "[variables('lclab01adds01NicName')]",
+      "type": "Microsoft.Network/networkInterfaces",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [
+        "Microsoft.Resources/deployments/lclab01vnet01",
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('lclab01adds01PublicName'))]"
+      ],
+      "tags": {
+        "displayName": "lclab01adds01Nic"
+      },
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Static",
+              "privateIPAddress": "[variables('lclab01adds01IPAddress')]",
+              "subnet": {
+                "id": "[variables('lclab01adds01SubnetRef')]"
+              },
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('lclab01adds01PublicName'))]"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "[variables('lclab01adds01Name')]",
+      "type": "Microsoft.Compute/virtualMachines",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [
+        "[concat('Microsoft.Storage/storageAccounts/', variables('lclab01Name'))]",
+        "[concat('Microsoft.Network/networkInterfaces/', variables('lclab01adds01NicName'))]",
+        "Microsoft.Resources/deployments/lclab01vnet01"
+      ],
+      "tags": {
+        "displayName": "lclab01adds01"
+      },
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('DomainControllerVMSize')]"
+        },
+        "osProfile": {
+          "computerName": "[variables('lclab01adds01Name')]",
+          "adminUsername": "[parameters('labAdminUserName')]",
+          "adminPassword": "[parameters('labAdminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('lclab01adds01ImagePublisher')]",
+            "offer": "[variables('lclab01adds01ImageOffer')]",
+            "sku": "[variables('lclab01adds01WindowsOSVersion')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "lclab01adds01OSDisk",
+            "vhd": {
+              "uri": "[concat('http://', variables('lclab01Name'), '.blob.core.windows.net/', variables('lclab01adds01StorageAccountContainerName'), '/', variables('lclab01adds01OSDiskName'), '.vhd')]"
+            },
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          },
+          "dataDisks": [
+            {
+              "name": "lclab01adds01DataDisk",
+              "vhd": {
+                "uri": "[concat('http://', variables('lclab01Name'), '.blob.core.windows.net/', variables('lclab01adds01StorageAccountContainerName'), '/', variables('lclab01adds01DataDiskName'), '.vhd')]"
+              },
+              "caching": "None",
+              "createOption": "Empty",
+              "diskSizeGB": "[variables('lclab01adds01DataDiskSize')]",
+              "lun": 0
+            }
+          ]
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('lclab01adds01NicName'))]"
+            }
+          ]
+        }
+      },
+      "resources": [
+        {
+          "name": "DeployADForest",
+          "type": "extensions",
+          "location": "[resourceGroup().location]",
+          "apiVersion": "2015-06-15",
+          "dependsOn": [
+            "[concat('Microsoft.Compute/virtualMachines/', variables('lclab01adds01Name'))]"
+          ],
+          "tags": {
+            "displayName": "DeployADForest"
+          },
+          "properties": {
+            "publisher": "Microsoft.Powershell",
+            "type": "DSC",
+            "typeHandlerVersion": "2.17",
+            "autoUpgradeMinorVersion": true,
+            "settings": {
+              "wmfVersion": "latest",
+              "configuration": {
+                "url": "[concat(variables('_artifactsLocation'), '/', 'dsc.zip')]",
+                "script": "[variables('DeployADForestConfigurationScript')]",
+                "function": "[variables('DeployADForestConfigurationScriptFunction')]"
+              },
+              "configurationArguments": {
+                "domainName": "[parameters('adDomainName')]",
+                "domainNameNetbios": "[variables('adDomainNetbios')]",
+                "domainDN": "[variables('adDomainDN')]",
+                "SourcePathAADConnect": "[variables('SourcePathAADConnect')]",
+                "TargetPathAADConnect": "[variables('TargetPathAADConnect')]"
+              },
+              "configurationData": {
+              },
+              "privacy": {
+                "dataCollection": "enable"
+              }
+            },
+            "protectedSettings": {
+              "configurationArguments": {
+                "AdminCredential": {
+                  "userName": "[parameters('labAdminUserName')]",
+                  "password": "[parameters('labAdminPassword')]"
+                }
+              },
+              "configurationUrlSasToken": "[variables('_artifactsLocationSasToken')]"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "lclab01vnet01-with-dns-server",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2015-01-01",
+      "dependsOn": [
+        "[concat('Microsoft.Compute/virtualMachines/', variables('lclab01adds01name'),'/extensions/DeployADForest')]"
+      ],
+      "properties": {
+        "mode": "Incremental",
+        "templateLink": {
+          "uri": "[concat(variables('_artifactsLocation'), '/', variables('lclab01vnetwithdnsTemplate'), variables('_artifactsLocationSasToken'))]",
+          "contentVersion": "1.0.0.0"
+        },
+        "parameters": {
+          "location": {
+            "value": "[resourceGroup().location]"
+          },
+          "virtualNetworkName": {
+            "value": "[variables('lclab01vnet01Name')]"
+          },
+          "virtualNetworkAddressRange": {
+            "value": "[parameters('vNetPrefix')]"
+          },
+          "subnetName": {
+            "value": "[variables('lclab01Subnet1Name')]"
+          },
+          "subnetRange": {
+            "value": "[parameters('SubnetPrefix')]"
+          },
+          "DNSServerAddress": {
+            "value": [
+              "[variables('lclab01adds01IPAddress')]"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "[variables('lclab01exch01PublicName')]",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [ ],
+      "tags": {
+        "displayName": "lclab01exch01Public"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Static",
+        "dnsSettings": {
+          "domainNameLabel": "[variables('lclab01exch01PublicDnsName')]"
+        }
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "name": "[variables('lclab01exch01NSGName')]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "lclab01exch01NSGName"
+      },
+      "properties": {
+        "securityRules": [
+          {
+            "name": "rdp-rule",
+            "properties": {
+              "description": "Allow RDP",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "3389",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 100,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "web-rule",
+            "properties": {
+              "description": "Allow WEB",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "443",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 110,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "smtp-rule",
+            "properties": {
+              "description": "Allow SMTP",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "25",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 120,
+              "direction": "Inbound"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "[variables('lclab01exch01NicName')]",
+      "type": "Microsoft.Network/networkInterfaces",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [
+        "[concat('Microsoft.Network/networkInterfaces/', variables('lclab01adds01NicName'))]",
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('lclab01exch01PublicName'))]",
+        "Microsoft.Resources/deployments/lclab01vnet01-with-dns-server",
+        "[concat('Microsoft.Network/networkSecurityGroups/', variables('lclab01exch01NSGName'))]"
+      ],
+      "tags": {
+        "displayName": "lclab01exch01Nic"
+      },
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[variables('lclab01exch01SubnetRef')]"
+              },
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('lclab01exch01PublicName'))]"
+              }
+
+            }
+          }
+        ],
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/NetworkSecurityGroups', variables('lclab01exch01NSGName'))]"
+        }
+      }
+
+    },
+    {
+      "name": "[variables('lclab01exch01Name')]",
+      "type": "Microsoft.Compute/virtualMachines",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [
+        "[concat('Microsoft.Storage/storageAccounts/', variables('lclab01Name'))]",
+        "[concat('Microsoft.Network/networkInterfaces/', variables('lclab01exch01NicName'))]",
+        "[concat('Microsoft.Compute/virtualMachines/', variables('lclab01adds01name'),'/extensions/DeployADForest')]"
+      ],
+      "tags": {
+        "displayName": "lclab01exch01"
+      },
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('ExchangeVMSize')]"
+        },
+        "osProfile": {
+          "computerName": "[variables('lclab01exch01Name')]",
+          "adminUsername": "[parameters('labAdminUserName')]",
+          "adminPassword": "[parameters('labAdminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('lclab01exch01ImagePublisher')]",
+            "offer": "[variables('lclab01exch01ImageOffer')]",
+            "sku": "[variables('lclab01exch01WindowsOSVersion')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "lclab01exch01OSDisk",
+            "vhd": {
+              "uri": "[concat('http://', variables('lclab01Name'), '.blob.core.windows.net/', variables('lclab01exch01StorageAccountContainerName'), '/', variables('lclab01exch01OSDiskName'), '.vhd')]"
+            },
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          },
+          "dataDisks": [
+            {
+              "name": "lclab01exch01DataDisk",
+              "vhd": {
+                "uri": "[concat('http://', variables('lclab01Name'), '.blob.core.windows.net/', variables('lclab01exch01StorageAccountContainerName'), '/', variables('lclab01exch01DataDiskName'), '.vhd')]"
+              },
+              "caching": "None",
+              "createOption": "Empty",
+              "diskSizeGB": "[variables('lclab01exch01DataDiskSize')]",
+              "lun": 0
+            }
+          ]
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('lclab01exch01NicName'))]"
+            }
+          ]
+        }
+      },
+      "resources": [
+        {
+          "apiVersion": "2015-06-15",
+          "type": "extensions",
+          "name": "joindomain",
+          "location": "[resourceGroup().location]",
+          "tags": {
+            "displayName": "joindomain"
+          },
+          "dependsOn": [
+            "[concat('Microsoft.Compute/virtualMachines/', variables('lclab01exch01Name'))]",
+            "[concat('Microsoft.Compute/virtualMachines/', variables('lclab01adds01name'),'/extensions/DeployADForest')]"
+          ],
+          "properties": {
+            "publisher": "Microsoft.Compute",
+            "type": "JsonADDomainExtension",
+            "typeHandlerVersion": "1.0",
+            "settings": {
+              "Name": "[parameters('adDomainName')]",
+              "OUPath": "[concat('OU=Servers,', variables('adDomainDN'))]",
+              "User": "[concat(parameters('labAdminUserName'), '@', parameters('adDomainName'))]",
+              "Restart": "true",
+              "Options": "[variables('lclab01DomainJoinOptions')]"
+            },
+            "protectedsettings": {
+              "Password": "[parameters('labAdminPassword')]"
+            }
+          }
+        },
+        {
+          "name": "InstallExchange2013",
+          "type": "extensions",
+          "location": "[resourceGroup().location]",
+          "apiVersion": "2015-06-15",
+          "dependsOn": [
+            "[concat('Microsoft.Compute/virtualMachines/', variables('lclab01exch01Name'))]",
+            "[concat('Microsoft.Compute/virtualMachines/', variables('lclab01exch01Name'), '/extensions/joindomain')]"
+          ],
+          "tags": {
+            "displayName": "InstallExchange2013"
+          },
+          "properties": {
+            "publisher": "Microsoft.Powershell",
+            "type": "DSC",
+            "typeHandlerVersion": "2.18",
+            "autoUpgradeMinorVersion": false,
+            "settings": {
+              "wmfVersion": "4.0",
+              "configuration": {
+                "url": "[concat(variables('_artifactsLocation'), '/', 'dsc.zip')]",
+                "script": "[variables('InstallExchange2013ConfigurationScript')]",
+                "function": "[variables('InstallExchange2013ConfigurationScriptFunction')]"
+              },
+              "configurationArguments": {
+                "domainName": "[parameters('adDomainName')]",
+                "domainNameNetbios": "[variables('adDomainNetbios')]",
+                "ExchangeOrgName": "[parameters('labName')]",
+                "ExchangeProductKey": "[parameters('ExchangeProductKey')]",
+                "ExchangeFQDN": "[variables('ExchangeFQDN')]",
+                "SourcePathSignInAssistant": "[variables('SourcePathSignInAssistant')]",
+                "targetPathSignInAssistant": "[variables('TargetPathSignInAssistant')]",
+                "GUIDSignInAssistant": "[variables('GUIDSignInAssistant')]",
+                "SourcePathAADPS": "[variables('SourcePathAADPS')]",
+                "TargetPathAADPS": "[variables('TargetPathAADPS')]",
+                "PublicZoneNS1": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[0]]",
+                "PublicZoneNS2": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[1]]",
+                "PublicZoneNS3": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[2]]",
+                "PublicZoneNS4": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[3]]"
+              },
+              "configurationData": {
+              },
+              "privacy": {
+                "dataCollection": "enable"
+              }
+            },
+            "protectedSettings": {
+              "configurationArguments": {
+                "AdminCredential": {
+                  "userName": "[parameters('labAdminUserName')]",
+                  "password": "[parameters('labAdminPassword')]"
+                }
+              },
+              "configurationUrlSasToken": "[variables('_artifactsLocationSasToken')]"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones",
+      "name": "[parameters('adDomainName')]",
+      "apiVersion": "2016-04-01",
+      "location": "global",
+      "tags": {
+        "displayName": "PublicDNSZone"
+      },
+      "properties": { }
+    },
+    {
+      "type": "Microsoft.Network/dnszones/CNAME",
+      "name": "[concat(parameters('adDomainName'), '/autodiscover')]",
+      "apiVersion": "2016-04-01",
+      "location": "global",
+      "tags": {
+        "displayName": "PublicDNS-Autodiscover"
+      },
+      "properties": {
+        "TTL": 3600,
+        "CNAMERecord": {
+          "cname": "[reference(resourceId('Microsoft.Network/publicIPAddresses', variables('lclab01exch01PublicName'))).dnsSettings.fqdn]"
+        }
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones/CNAME",
+      "name": "[concat(parameters('adDomainName'), '/msoid')]",
+      "apiVersion": "2016-04-01",
+      "location": "global",
+      "tags": {
+        "displayName": "PublicDNS-msoid"
+      },
+      "properties": {
+        "TTL": 3600,
+        "CNAMERecord": {
+          "cname": "clientconfig.microsoftonline-p.net"
+        }
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones/CNAME",
+      "name": "[concat(parameters('adDomainName'), '/', variables('lclab01exch01Name'))]",
+      "apiVersion": "2016-04-01",
+      "location": "global",
+      "tags": {
+        "displayName": "PublicDNS-ExchangeServer"
+      },
+      "properties": {
+        "TTL": 3600,
+        "CNAMERecord": {
+          "cname": "[reference(resourceId('Microsoft.Network/publicIPAddresses', variables('lclab01exch01PublicName'))).dnsSettings.fqdn]"
+        }
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones/CNAME",
+      "name": "[concat(parameters('adDomainName'), '/enterpriseregistration')]",
+      "apiVersion": "2016-04-01",
+      "location": "global",
+      "tags": {
+        "displayName": "PublicDNS-enterpriseregistration"
+      },
+      "properties": {
+        "TTL": 3600,
+        "CNAMERecord": {
+          "cname": "enterpriseregistration.windows.net"
+        }
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones/CNAME",
+      "name": "[concat(parameters('adDomainName'), '/enterpriseenrollment')]",
+      "apiVersion": "2016-04-01",
+      "location": "global",
+      "tags": {
+        "displayName": "PublicDNS-enterpriseenrollment"
+      },
+      "properties": {
+        "TTL": 3600,
+        "CNAMERecord": {
+          "cname": "enterpriseenrollment.manage.microsoft.com"
+        }
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones/CNAME",
+      "name": "[concat(parameters('adDomainName'), '/sip')]",
+      "apiVersion": "2016-04-01",
+      "location": "global",
+      "tags": {
+        "displayName": "PublicDNS-sip"
+      },
+      "properties": {
+        "TTL": 3600,
+        "CNAMERecord": {
+          "cname": "sipdir.online.lync.com"
+        }
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones/CNAME",
+      "name": "[concat(parameters('adDomainName'), '/lyncdiscover')]",
+      "apiVersion": "2016-04-01",
+      "location": "global",
+      "tags": {
+        "displayName": "PublicDNS-lyncdiscover"
+      },
+      "properties": {
+        "TTL": 3600,
+        "CNAMERecord": {
+          "cname": "webdir.online.lync.com"
+        }
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones/SRV",
+      "name": "[concat(parameters('adDomainName'), '/_sip._tls')]",
+      "apiVersion": "2016-04-01",
+      "location": "global",
+      "tags": {
+        "displayName": "PublicDNS-siptls"
+      },
+      "properties": {
+        "TTL": 3600,
+        "SRVRecords": [
+          {
+            "priority": 100,
+            "weight": 1,
+            "port": 443,
+            "target": "sipdir.online.lync.com"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones/SRV",
+      "name": "[concat(parameters('adDomainName'), '/_sipfederationtls._tcp')]",
+      "apiVersion": "2016-04-01",
+      "location": "global",
+      "tags": {
+        "displayName": "PublicDNS-sipfederationtcp"
+      },
+      "properties": {
+        "TTL": 3600,
+        "SRVRecords": [
+          {
+            "priority": 100,
+            "weight": 1,
+            "port": 5061,
+            "target": "sipfed.online.lync.com"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+
+    {
+      "type": "Microsoft.Network/dnszones/MX",
+      "name": "[concat(parameters('adDomainName'), '/@')]",
+      "apiVersion": "2016-04-01",
+      "location": "global",
+      "tags": {
+        "displayName": "PublicDNS-MX10"
+      },
+      "properties": {
+        "TTL": 3600,
+        "MXRecords": [
+          {
+            "preference": "10",
+            "exchange": "[concat(replace(parameters('adDomainName'),'.','-'),'.mail.protection.outlook.com')]"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones/TXT",
+      "name": "[concat(parameters('adDomainName'),'/@')]",
+      "apiVersion": "2015-05-04-preview",
+      "location": "global",
+      "tags": {
+        "displayName": "PublicDNS-TXT"
+      },
+      "properties": {
+        "TTL": 3600,
+        "TXTRecords": [
+          {
+            "value": "[concat('v=spf1 include:spf.protection.outlook.com ip4:', reference(resourceId('Microsoft.Network/publicIPAddresses', variables('lclab01exch01PublicName'))).ipAddress, ' -all')]"
+          },
+          {
+            "value": "[parameters('Office365_Domain_Verification')]"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]",
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('lclab01exch01PublicName'))]"
+      ]
+    }
+  ],
+
+    "outputs": {
+      "DNS-Name-Server-1": {
+        "type": "string",
+        "value": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[0]]"
+      },
+      "DNS-Name-Server-2": {
+        "type": "string",
+        "value": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[1]]"
+      },
+      "DNS-Name-Server-3": {
+        "type": "string",
+        "value": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[2]]"
+      },
+      "DNS-Name-Server-4": {
+        "type": "string",
+        "value": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[3]]"
+      },
+      "Exchange-External-Address": {
+        "type": "string",
+        "value": "[concat(variables('lclab01exch01Name'), '.', parameters('adDomainName'))]"
+      }
+    }
+  }

@@ -1,0 +1,25 @@
+﻿{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "labName": {
+            "value": "lclab09"
+        },
+        "adDomainName": {
+            "value": "lab09.lucisit.net"
+        },
+        "adDomainNetbios": {
+            "value": "lab09"
+        },
+        "labAdminUserName": {
+            "value": "lcadmin"
+        },
+        "vNetPrefix": {
+            "value": "10.9.0.0/16"
+        },
+        "SubnetPrefix": {
+            "value": "10.9.0.0/24"
+        }
+
+    }
+}
